@@ -6,7 +6,7 @@ import Map, { Marker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import io from 'socket.io-client'
 import mapboxgl from 'mapbox-gl'
-const socket = io('http://localhost:5000'); // Backend URL
+const socket = io(import.meta.env.VITE_BACKEND_URL);
 
 type BusLocation = {
   busId?: string;

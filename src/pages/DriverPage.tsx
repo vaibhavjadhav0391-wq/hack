@@ -4,7 +4,7 @@ import { Navigation, Wifi, WifiOff, Upload, CheckCircle, Bus, MapPin, Clock, Bat
 import { cn } from '@/lib/utils'
 import io from 'socket.io-client';
 
-const socket = io('http://localhost:5000'); // Backend URL
+const socket = io(import.meta.env.VITE_BACKEND_URL);
 const busId = 'BUS-01';
 
 export default function DriverPage() {
