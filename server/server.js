@@ -23,6 +23,12 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  socket.on('tripStart', (data) => {
+    if (!data) return;
+    console.log("Trip Start Received:", data);
+    io.emit('tripStart', data);
+  });
+
   socket.on('locationUpdate', (data) => {
     if (!data) return;
     console.log("Received from driver:", data);

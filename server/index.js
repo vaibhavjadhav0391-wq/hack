@@ -19,6 +19,12 @@ let busLocations = {}; // { busId: {lat, lng, speed, timestamp} }
 
 io.on('connection', (socket) => {
   // Driver sends location
+  socket.on('tripStart', (data) => {
+    if (!data) return;
+    console.log("Trip Start Received:", data);
+    io.emit('tripStart', data);
+  });
+
   socket.on('locationUpdate', (data) => {
     if (!data) return;
     console.log("Received from driver:", data);
