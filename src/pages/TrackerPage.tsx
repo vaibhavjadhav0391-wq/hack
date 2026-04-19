@@ -1,210 +1,278 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MapPin, Clock, Wifi, WifiOff, Zap, Bus, ChevronRight, Activity, Navigation, AlertCircle } from 'lucide-react'
+import { MapPin, Clock, Wifi, Bus, Navigation, Activity, ChevronRight, AlertCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import Map, { Marker, Source, Layer } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import io from 'socket.io-client'
-import mapboxgl from 'mapbox-gl'
-const socket = io(import.meta.env.VITE_BACKEND_URL);
 
-type BusLocation = {
-  busId?: string;
+const socket = io(import.meta.env.VITE_BACKEND_URL);
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+
+interface BusStop {
+  name: string;
   lat: number;
   lng: number;
-  speed: number;
-  accuracy: number;
-  timestamp?: number;
-  source?: string;
-  destination?: string;
-  srcCoords?: [number, number];
-  destCoords?: [number, number];
-  routeGeoJSON?: any;
-};
+}
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "YOUR_MAPBOX_TOKEN_HERE";
-
-// Helper for distance calc
-function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371; // km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+interface BusData {
+  routeId: string;
+  lat: number;
+  lng: number;
+  source: string;
+  destination: string;
+  currentStop?: string;
+  nextStop?: string;
+  etaMinutes?: number;
+  status: string;
+  stops: BusStop[];
+  lastUpdate: number;
+  displayLat: number; // For smooth interpolation
+  displayLng: number; // For smooth interpolation
 }
 
 export default function TrackerPage() {
-  const [bus, setBus] = useState<BusLocation | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
-  const [now, setNow] = useState<number>(Date.now());
+  const [buses, setBuses] = useState<Record<string, BusData>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewState, setViewState] = useState({
-    longitude: 77.2090,
-    latitude: 28.6139,
-    zoom: 14,
+    longitude: 75.3238,
+    latitude: 19.8762,
+    zoom: 13,
     pitch: 45,
     bearing: 0
   });
+
   const mapRef = useRef<any>(null);
-  const markerRef = useRef<mapboxgl.Marker>(null);
 
+  // 1. SMART SOCKET LISTENER
   useEffect(() => {
-    socket.on('liveLocation', (data: BusLocation) => {
-      if (!data) {
-        console.error("No data received on tracker");
-        return;
-      }
-      console.log("Received on tracker:", data);
-      
-      setBus(data);
-      setLastUpdate(Date.now());
-      
-      if (markerRef.current) {
-        markerRef.current.setLngLat([data.lng, data.lat]);
-      }
-      if (mapRef.current) {
-        const map = typeof mapRef.current.getMap === 'function' ? mapRef.current.getMap() : mapRef.current;
-        if (map && typeof map.flyTo === 'function') {
-           map.flyTo({
-             center: [data.lng, data.lat],
-             zoom: 15
-           });
-        }
-      }
+    socket.on('allBuses', (allBuses: BusData[]) => {
+      setBuses(prev => {
+        const next = { ...prev };
+        allBuses.forEach(b => {
+          if (!next[b.routeId]) {
+            next[b.routeId] = { ...b, displayLat: b.lat, displayLng: b.lng };
+          } else {
+            // Update everything EXCEPT display coordinates (handled by interpolator)
+            next[b.routeId] = { 
+              ...next[b.routeId], 
+              ...b, 
+              displayLat: next[b.routeId].displayLat, 
+              displayLng: next[b.routeId].displayLng 
+            };
+          }
+        });
+        return next;
+      });
     });
-    return () => {
-      socket.off('liveLocation');
-    };
+
+    return () => { socket.off('allBuses'); };
   }, []);
 
+  // 2. 60FPS SMOOTH INTERPOLATION ENGINE
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    const frame = requestAnimationFrame(function animate() {
+      setBuses(prev => {
+        const next = { ...prev };
+        let changed = false;
+        Object.keys(next).forEach(id => {
+          const b = next[id];
+          const latDiff = b.lat - b.displayLat;
+          const lngDiff = b.lng - b.displayLng;
+          
+          // Smoothly glide towards target (0.1 = 10% per frame)
+          if (Math.abs(latDiff) > 0.00001 || Math.abs(lngDiff) > 0.00001) {
+            b.displayLat += latDiff * 0.08;
+            b.displayLng += lngDiff * 0.08;
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+      requestAnimationFrame(animate);
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
-  const timeSinceLastUpdate = (now - lastUpdate) / 1000;
-  const isDelayed = bus && timeSinceLastUpdate > 10;
-  
-  let distanceRemaining = '--';
-  if (bus?.destCoords && bus?.lat) {
-    const dist = getDistance(bus.lat, bus.lng, bus.destCoords[1], bus.destCoords[0]);
-    distanceRemaining = dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`;
-  }
+  const selectedBus = selectedId ? buses[selectedId] : null;
+
+  // Auto-follow logic
+  useEffect(() => {
+    if (selectedBus && mapRef.current) {
+      mapRef.current.flyTo({
+        center: [selectedBus.displayLng, selectedBus.displayLat],
+        zoom: 15.5,
+        duration: 2000,
+        essential: true
+      });
+    }
+  }, [selectedId]);
 
   return (
-    <div className="min-h-screen pt-16 flex flex-col bg-navy-900">
-      <div className="flex-1 grid lg:grid-cols-[320px,1fr] gap-0">
-        {/* Sidebar */}
-        <div className="glass border-r border-white/5 flex flex-col h-[calc(100vh-64px)] overflow-y-auto z-10 relative bg-navy-900">
-          <div className="p-4 border-b border-white/5">
-            <h1 className="font-display font-bold text-white text-lg">Live Tracker</h1>
-            <p className="text-slate-500 text-xs mt-0.5">{bus?.source ? `${bus.source} → ${bus.destination}` : 'Waiting for trip...'}</p>
-          </div>
-
-          {/* Network status */}
-          <div className="p-4 border-b border-white/5">
-            <div className={cn('flex items-center gap-2.5 px-3 py-2.5 rounded-xl glass-light border', isDelayed ? 'border-amber-500/20' : 'border-teal-500/20')}>
-              <span className={cn('w-2 h-2 rounded-full flex-shrink-0', isDelayed ? 'bg-amber-400' : 'bg-teal-400', 'animate-pulse')} />
-              <div className="flex-1 min-w-0">
-                <p className={cn('text-xs font-semibold', isDelayed ? 'text-amber-400' : 'text-teal-400')}>
-                   {isDelayed ? 'DELAYED — Last Known Pos' : 'Live — WebSocket'}
-                </p>
-                <p className="text-xs text-slate-500">Updates every 3s</p>
-              </div>
-              <Wifi size={14} className={isDelayed ? "text-amber-400" : "text-teal-400"} />
+    <div className="min-h-screen pt-16 flex flex-col bg-slate-950 font-sans">
+      <div className="flex-1 grid lg:grid-cols-[340px,1fr] gap-0">
+        
+        {/* SIDEBAR PANEL */}
+        <aside className="bg-slate-900 border-r border-white/5 flex flex-col h-[calc(100vh-64px)] overflow-hidden z-20 shadow-2xl">
+          <div className="p-5 border-b border-white/10 bg-gradient-to-br from-indigo-500/10 to-transparent">
+            <h1 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+              <Activity className="text-indigo-400" size={20} />
+              Fleet Monitor
+            </h1>
+            <div className="mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 w-fit">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
+                {Object.keys(buses).length} Active Buses
+              </span>
             </div>
           </div>
 
-          {/* Primary bus card */}
-          <div className="p-4 border-b border-white/5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-teal-500 flex items-center justify-center">
-                <Bus size={14} className="text-black" />
-              </div>
-              <div>
-                <p className="text-white text-sm font-semibold">BUS-01</p>
-                <p className="text-slate-500 text-xs">Campus Loop</p>
-              </div>
-              <div className="ml-auto flex items-center gap-1">
-                <span className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isDelayed ? "bg-amber-400" : "bg-teal-400")} />
-                <span className={cn("text-xs font-semibold tracking-wider", isDelayed ? "text-amber-400" : "text-teal-400")}>{isDelayed ? "DELAYED" : "LIVE"}</span>
-              </div>
-            </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <AnimatePresence mode="popLayout">
+              {Object.values(buses).map(bus => (
+                <motion.div
+                  key={bus.routeId}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={() => setSelectedId(bus.routeId)}
+                  className={cn(
+                    "relative overflow-hidden group p-4 rounded-2xl cursor-pointer transition-all duration-300 border",
+                    selectedId === bus.routeId 
+                      ? "bg-indigo-500/20 border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.2)]" 
+                      : "bg-white/5 border-white/5 hover:bg-white/10"
+                  )}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("p-2 rounded-xl", selectedId === bus.routeId ? "bg-indigo-500 text-white" : "bg-white/10 text-slate-400")}>
+                        <Bus size={18} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">{bus.routeId}</h3>
+                        <p className="text-[10px] text-slate-500 uppercase font-black">{bus.source} &rarr; {bus.destination}</p>
+                      </div>
+                    </div>
+                    {selectedId === bus.routeId && (
+                      <div className="p-1 px-2 rounded-md bg-indigo-500/20 text-indigo-400 text-[10px] font-black uppercase">Selected</div>
+                    )}
+                  </div>
 
-            <div className="stat-card rounded-xl p-4 mb-3 border border-white/5 bg-white/5">
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Distance Remaining</p>
-                  <p className="text-white font-semibold text-sm">{bus ? distanceRemaining : 'Waiting for data...'}</p>
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <div className="bg-black/20 rounded-lg p-2.5">
+                      <p className="text-[8px] uppercase text-slate-500 font-bold mb-1">Next Stop</p>
+                      <p className="text-xs text-white font-bold truncate">{bus.nextStop || '--'}</p>
+                    </div>
+                    <div className="bg-black/20 rounded-lg p-2.5">
+                      <p className="text-[8px] uppercase text-slate-500 font-bold mb-1">Live ETA</p>
+                      <p className="text-xs text-indigo-400 font-bold">{bus.etaMinutes || '--'} min</p>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {Object.keys(buses).length === 0 && (
+              <div className="py-12 text-center">
+                <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4 border border-white/5">
+                  <AlertCircle className="text-slate-600" size={24} />
                 </div>
-                <div className="text-right">
-                  <p className="text-3xl font-display font-bold text-teal-400">{bus ? Math.round(bus.speed) : '--'}</p>
-                  <p className="text-xs text-slate-400">km/h</p>
+                <p className="text-slate-500 text-sm font-medium">Waiting for GPS feeds...</p>
+                <p className="text-slate-600 text-xs mt-1">Start Bus Driver App to begin tracking</p>
+              </div>
+            )}
+          </div>
+
+          {selectedBus && (
+            <div className="p-5 bg-slate-950 border-t border-white/10">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Selected Route Detail</span>
+                <Navigation className="text-indigo-400" size={14} />
+              </div>
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                    <div className="w-0.5 flex-1 bg-slate-800 my-1" />
+                    <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                  </div>
+                  <div className="flex-1 space-y-4">
+                    <div>
+                      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Current Stop</p>
+                      <p className="text-xs text-white font-bold">{selectedBus.currentStop || selectedBus.source}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Destination</p>
+                      <p className="text-xs text-white font-bold">{selectedBus.destination}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+          )}
+        </aside>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div className="glass-light rounded-lg p-2 text-center border border-white/5 bg-black/20">
-                <p className="text-white text-xs font-semibold">{bus ? Math.round(bus.speed) : '--'} km/h</p>
-                <p className="text-slate-500 text-[10px] mt-0.5">Speed</p>
-              </div>
-              <div className="glass-light rounded-lg p-2 text-center border border-white/5 bg-black/20">
-                <p className="text-white text-xs font-semibold">{bus ? Math.round(bus.accuracy) : '--'} m</p>
-                <p className="text-slate-500 text-[10px] mt-0.5">Accuracy</p>
-              </div>
-              <div className="glass-light rounded-lg p-2 text-center border border-white/5 bg-black/20">
-                <p className={cn("text-xs font-semibold", isDelayed ? "text-amber-400" : "text-teal-400")}>{bus ? (isDelayed ? 'DELAYED' : 'LIVE') : '--'}</p>
-                <p className="text-slate-500 text-[10px] mt-0.5">Status</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Map area */}
-        <div className="relative w-full h-[calc(100vh-64px)] z-0">
+        {/* MAP PANEL */}
+        <main className="relative">
           <Map
             ref={mapRef}
             {...viewState}
             onMove={evt => setViewState(evt.viewState)}
-            mapStyle="mapbox://styles/yaak-driving-curriculum/cm6up5as0019a01r5e6n33wmn"
+            mapStyle="mapbox://styles/mapbox/dark-v11"
             mapboxAccessToken={MAPBOX_TOKEN}
           >
-            {bus?.routeGeoJSON && (
-              <Source id="route" type="geojson" data={bus.routeGeoJSON}>
-                <Layer
-                  id="route-layer"
-                  type="line"
-                  paint={{
-                    'line-color': '#14b8a6',
-                    'line-width': 5,
-                    'line-opacity': 0.8
-                  }}
-                />
-              </Source>
-            )}
-
-            {bus && (
-              <Marker ref={markerRef} longitude={bus.lng} latitude={bus.lat} anchor="center">
-                <div style={{ transition: 'all 0.5s ease-in-out' }} className="w-8 h-8 bg-teal-500 rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(20,184,166,0.6)] border-2 border-white">
-                  <Bus size={16} className="text-black" />
+            {/* 1. BUS MARKERS */}
+            {Object.values(buses).map(bus => (
+              <Marker
+                key={bus.routeId}
+                longitude={bus.displayLng}
+                latitude={bus.displayLat}
+                anchor="center"
+                onClick={(e) => {
+                  e.originalEvent.stopPropagation();
+                  setSelectedId(bus.routeId);
+                }}
+              >
+                <div className={cn(
+                  "p-1.5 rounded-full border-2 border-white cursor-pointer transition-all duration-500 shadow-2xl",
+                  selectedId === bus.routeId 
+                    ? "bg-indigo-500 scale-125 z-50 ring-4 ring-indigo-500/20" 
+                    : "bg-slate-700 hover:bg-slate-600 z-10"
+                )}>
+                  <Bus size={16} className="text-white" />
                 </div>
               </Marker>
-            )}
-            
-            {bus?.destCoords && (
-               <Marker longitude={bus.destCoords[0]} latitude={bus.destCoords[1]} anchor="bottom">
-                  <MapPin size={32} className="text-red-500 drop-shadow-md" />
-               </Marker>
-            )}
-            
-            {!bus && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-sm font-medium border border-white/10 shadow-xl z-20 backdrop-blur-md flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping" /> Waiting for live data...
+            ))}
+
+            {/* 2. STOP MARKERS (For Selected Bus) */}
+            {selectedBus?.stops?.map((stop, idx) => (
+              <Marker
+                key={`${selectedBus.routeId}-stop-${idx}`}
+                longitude={stop.lng}
+                latitude={stop.lat}
+                anchor="bottom"
+              >
+                <div className="flex flex-col items-center group cursor-pointer">
+                  <div className="bg-slate-900 border border-white/20 px-2 py-1 rounded text-[8px] text-white opacity-0 group-hover:opacity-100 transition-opacity mb-1 whitespace-nowrap font-bold">
+                    {stop.name}
+                  </div>
+                  <div className={cn(
+                    "w-2.5 h-2.5 rounded-full border-2 border-white",
+                    stop.name === selectedBus.currentStop ? "bg-emerald-500 scale-125" : "bg-indigo-400"
+                  )} />
+                </div>
+              </Marker>
+            ))}
+
+            {/* 3. TRIP START OVERLAY */}
+            {!selectedId && Object.keys(buses).length > 0 && (
+              <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl shadow-2xl z-50 flex items-center gap-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
+                <span className="text-sm font-bold text-white tracking-tight">Select a bus from the fleet to track live movement</span>
               </div>
             )}
           </Map>
-        </div>
+        </main>
       </div>
     </div>
   )
