@@ -51,14 +51,24 @@ io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   socket.emit('allBuses', Object.values(buses));
 
+  // Initialize a Bus Journey
   socket.on('tripStart', (data) => {
     if (!data.routeId) return;
+    
+    // Fallbacks for immediate UI display
+    const startStop = data.stops ? data.stops[0].name : (data.source || 'Station');
+    const nextStop = data.stops ? (data.stops[1]?.name || data.destination) : (data.destination || 'Next Depot');
+    const startEta = data.etaMinutes || (data.stops ? data.stops.length * 4 : 10);
+
     buses[data.routeId] = {
       ...data,
       lastUpdate: Date.now(),
       lat: data.stops ? data.stops[0].lat : 0,
       lng: data.stops ? data.stops[0].lng : 0,
-      status: 'active'
+      status: 'active',
+      currentStop: startStop,
+      nextStop: nextStop,
+      etaMinutes: startEta
     };
     io.emit('allBuses', Object.values(buses));
   });
