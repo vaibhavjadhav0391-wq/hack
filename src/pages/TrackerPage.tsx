@@ -203,18 +203,32 @@ export default function TrackerPage() {
                   />
                   <button 
                     onClick={async () => {
-                      const phone = (document.getElementById('phone-input') as HTMLInputElement).value;
-                      if(!phone) return alert('Enter phone number');
+                      const input = (document.getElementById('phone-input') as HTMLInputElement).value;
                       
-                      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/subscribe`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone, routeId: selectedBus.routeId })
-                      });
+                      // 1. CLEAN: Remove spaces, dashes, and non-numeric chars
+                      const cleanNumber = input.replace(/\D/g, ''); 
                       
-                      if(res.ok) {
-                        alert('Alert Set! We will text you.');
-                        (document.getElementById('phone-input') as HTMLInputElement).value = '';
+                      // 2. VALIDATE: Must be exactly 10 digits
+                      if (cleanNumber.length !== 10) {
+                        return alert('Please enter a valid 10-digit phone number');
+                      }
+
+                      // 3. FORMAT: Auto-add +91 country code
+                      const formattedPhone = `+91${cleanNumber}`;
+                      
+                      try {
+                        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/subscribe`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ phone: formattedPhone, routeId: selectedBus.routeId })
+                        });
+                        
+                        if(res.ok) {
+                          alert(`Alert Set! Updates will be sent to ${formattedPhone}`);
+                          (document.getElementById('phone-input') as HTMLInputElement).value = '';
+                        }
+                      } catch (err) {
+                        alert('Subscription failed. Please check your connection.');
                       }
                     }}
                     className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-all active:scale-95"
