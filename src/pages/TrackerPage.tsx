@@ -184,26 +184,68 @@ export default function TrackerPage() {
           </div>
 
           {selectedBus && (
-            <div className="p-5 bg-slate-950 border-t border-white/10">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Selected Route Detail</span>
-                <Navigation className="text-indigo-400" size={14} />
+            <div className="p-5 bg-slate-950 border-t border-white/10 space-y-6">
+              {/* SMS SUBSCRIPTION SECTION */}
+              <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="p-1 rounded bg-indigo-500 text-[10px] text-white font-bold">SMS</span>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Arrival Alerts</h4>
+                </div>
+                <p className="text-[10px] text-slate-400 mb-4 font-medium leading-relaxed">
+                  We will text you when {selectedBus.routeId} is within 3 minutes of your stop.
+                </p>
+                <div className="flex gap-2">
+                  <input 
+                    type="tel" 
+                    id="phone-input"
+                    placeholder="+91..." 
+                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <button 
+                    onClick={async () => {
+                      const phone = (document.getElementById('phone-input') as HTMLInputElement).value;
+                      if(!phone) return alert('Enter phone number');
+                      
+                      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/subscribe`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone, routeId: selectedBus.routeId })
+                      });
+                      
+                      if(res.ok) {
+                        alert('Alert Set! We will text you.');
+                        (document.getElementById('phone-input') as HTMLInputElement).value = '';
+                      }
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-all active:scale-95"
+                  >
+                    Notify
+                  </button>
+                </div>
               </div>
-              <div className="space-y-4">
-                <div className="flex gap-3">
-                  <div className="flex flex-col items-center">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-                    <div className="w-0.5 flex-1 bg-slate-800 my-1" />
-                    <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                  </div>
-                  <div className="flex-1 space-y-4">
-                    <div>
-                      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Current Stop</p>
-                      <p className="text-xs text-white font-bold">{selectedBus.currentStop || selectedBus.source}</p>
+
+              {/* ROUTE DETAILS */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Route Progression</span>
+                  <Navigation className="text-indigo-400" size={14} />
+                </div>
+                <div className="space-y-4">
+                  <div className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                      <div className="w-0.5 flex-1 bg-slate-800 my-1" />
+                      <div className="w-2 h-2 rounded-full bg-indigo-500" />
                     </div>
-                    <div>
-                      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Destination</p>
-                      <p className="text-xs text-white font-bold">{selectedBus.destination}</p>
+                    <div className="flex-1 space-y-4">
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Active Step</p>
+                        <p className="text-xs text-white font-bold">{selectedBus.currentStop || selectedBus.source}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-tight">Final Destination</p>
+                        <p className="text-xs text-white font-bold">{selectedBus.destination}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
