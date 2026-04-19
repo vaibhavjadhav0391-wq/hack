@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
-require('dotenv').config();
 const { Server } = require('socket.io');
 const twilio = require('twilio');
 
