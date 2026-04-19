@@ -40,8 +40,8 @@ io.on('connection', (socket) => {
   });
 });
 
-// Handle React Client-Side Routing
-app.get('*', (req, res) => {
+// Handle React Client-Side Routing - Fallback (Express 5 Safe)
+app.use((req, res) => {
   res.sendFile(path.resolve(__dirname, '../dist', 'index.html'));
 });
 
