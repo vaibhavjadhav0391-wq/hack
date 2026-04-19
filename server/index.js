@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -5,6 +6,9 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
+// Serve static React build files
+app.use(express.static(path.resolve(__dirname, '../dist')));
 
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -27,6 +31,11 @@ io.on('connection', (socket) => {
   socket.emit('init-locations', busLocations);
 
   socket.on('disconnect', () => {});
+});
+
+// Handle React Client-Side Routing
+app.get('*', (req, res) => {
+  res.sendFile(path.resolve(__dirname, '../dist', 'index.html'));
 });
 
 const PORT = process.env.PORT || 5000;
