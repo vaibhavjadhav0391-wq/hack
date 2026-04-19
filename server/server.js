@@ -27,13 +27,25 @@ let buses = {};
 let subscribers = []; // Array of { phone, routeId, lastNotifiedStop }
 
 // SUBSCRIPTION API
-app.post('/subscribe', (req, res) => {
+app.post('/subscribe', async (req, res) => {
   const { phone, routeId } = req.body;
   if (!phone || !routeId) return res.status(400).send('Missing details');
 
   subscribers.push({ phone, routeId, lastNotifiedStop: null });
   console.log(`[SMS] New Subscriber for ${routeId}: ${phone}`);
-  res.status(200).send('Subscribed Successfully');
+
+  // 1. SEND IMMEDIATE WELCOME SMS
+  try {
+    await twilioClient.messages.create({
+      body: `TransitPulse: Thank you for subscribing! We will now text you live updates for bus ${routeId}.`,
+      from: process.env.TWILIO_FROM,
+      to: phone
+    });
+    res.status(200).send('Subscribed Successfully');
+  } catch (err) {
+    console.error(`[SMS] Welcome Error:`, err.message);
+    res.status(200).send('Subscribed (SMS delayed)'); // Still succeed but log error
+  }
 });
 
 io.on('connection', (socket) => {
@@ -60,8 +72,9 @@ io.on('connection', (socket) => {
     let eta = distanceRemaining ? Math.round((distanceRemaining / avgSpeed) * 60) : 10;
     eta = Math.max(1, Math.min(60, eta));
 
+    const bus = buses[routeId];
     buses[routeId] = {
-      ...buses[routeId],
+      ...bus,
       lat, lng, currentStop, nextStop,
       etaMinutes: eta,
       lastUpdate: Date.now()
@@ -69,21 +82,28 @@ io.on('connection', (socket) => {
 
     io.emit('allBuses', Object.values(buses));
 
-    // CHECK FOR SMS TRIGGER
-    // If the bus is near the next stop (e.g. within 2 mins), notify subscribers
-    if (eta <= 3 && nextStop) {
+    // 2. LIVE STOP & ARRIVAL UPDATES
+    if (nextStop) {
       subscribers.forEach(async (sub) => {
         if (sub.routeId === routeId && sub.lastNotifiedStop !== nextStop) {
+          
+          let alertMessage = `TransitPulse: Your bus is approaching. Next stop: ${nextStop}. ETA: ${eta} mins.`;
+          
+          // Check if this is the final stop
+          if (nextStop === bus.destination) {
+            alertMessage = `TransitPulse: Your bus is arriving at its final destination: ${nextStop}. Please gather your belongings!`;
+          }
+
           try {
             await twilioClient.messages.create({
-              body: `TransitPulse: Your bus (${routeId}) is arriving at ${nextStop} in ~${eta} mins. Get ready!`,
+              body: alertMessage,
               from: process.env.TWILIO_FROM,
               to: sub.phone
             });
-            sub.lastNotifiedStop = nextStop; // Prevent spamming for the same stop
-            console.log(`[SMS] Sent to ${sub.phone} for stop ${nextStop}`);
+            sub.lastNotifiedStop = nextStop;
+            console.log(`[SMS] Update sent to ${sub.phone} for ${nextStop}`);
           } catch (err) {
-            console.error(`[SMS] Error sending to ${sub.phone}:`, err.message);
+            console.error(`[SMS] Update Error:`, err.message);
           }
         }
       });
