@@ -45,8 +45,8 @@ socket.on('connect', () => {
       const lat = start.lat + (end.lat - start.lat) * progress;
       const lng = start.lng + (end.lng - start.lng) * progress;
       
-      const stopIdx = Math.floor(progress * bus.stops.length);
-      const currentStop = bus.stops[stopIdx]?.name;
+      const stopIdx = Math.min(bus.stops.length - 1, Math.floor(progress * bus.stops.length));
+      const currentStop = bus.stops[stopIdx]?.name || bus.source;
       const nextStop = bus.stops[stopIdx + 1]?.name || bus.destination;
 
       socket.emit('locationUpdate', {
@@ -55,7 +55,7 @@ socket.on('connect', () => {
         lng,
         currentStop,
         nextStop,
-        distanceRemaining: (1 - progress) * 5 // 5km total route
+        distanceRemaining: (1 - progress) * 5 
       });
     });
     step++;

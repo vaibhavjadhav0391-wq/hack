@@ -161,11 +161,11 @@ export default function TrackerPage() {
                   <div className="grid grid-cols-2 gap-2 mt-4">
                     <div className="bg-black/20 rounded-lg p-2.5">
                       <p className="text-[8px] uppercase text-slate-500 font-bold mb-1">Next Stop</p>
-                      <p className="text-xs text-white font-bold truncate">{bus.nextStop || '--'}</p>
+                      <p className="text-xs text-white font-bold truncate">{bus.nextStop ? bus.nextStop : 'Arriving Soon'}</p>
                     </div>
                     <div className="bg-black/20 rounded-lg p-2.5">
                       <p className="text-[8px] uppercase text-slate-500 font-bold mb-1">Live ETA</p>
-                      <p className="text-xs text-indigo-400 font-bold">{bus.etaMinutes || '--'} min</p>
+                      <p className="text-xs text-indigo-400 font-bold">{bus.etaMinutes !== undefined ? `${bus.etaMinutes} min` : 'Calculating...'}</p>
                     </div>
                   </div>
                 </motion.div>

@@ -64,17 +64,22 @@ io.on('connection', (socket) => {
   });
 
   socket.on('locationUpdate', async (data) => {
-    const { routeId, lat, lng, distanceRemaining, currentStop, nextStop } = data;
+    const { routeId, lat, lng, distanceRemaining } = data;
     if (!routeId || !buses[routeId]) return;
 
+    const busState = buses[routeId];
     const avgSpeed = 25; 
-    let eta = distanceRemaining ? Math.round((distanceRemaining / avgSpeed) * 60) : 10;
+    let eta = distanceRemaining ? Math.round((distanceRemaining / avgSpeed) * 60) : (busState.etaMinutes || 12);
     eta = Math.max(1, Math.min(60, eta));
 
-    const bus = buses[routeId];
+    const currentStop = data.currentStop || busState.currentStop || busState.source;
+    const nextStop = data.nextStop || busState.nextStop || (busState.stops ? busState.stops[1]?.name : busState.destination);
+
     buses[routeId] = {
-      ...bus,
-      lat, lng, currentStop, nextStop,
+      ...busState,
+      lat, lng, 
+      currentStop, 
+      nextStop,
       etaMinutes: eta,
       lastUpdate: Date.now()
     };
